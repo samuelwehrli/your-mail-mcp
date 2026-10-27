@@ -22,7 +22,7 @@ import (
 
 // Account is one IMAP account to mirror. Everything except name, host, user
 // and password has a default; see the design spec for why the mbsync knobs
-// that used to live here (pipeline depth, SubFolders, AuthMechs) are pinned.
+// that used to live here (pipeline depth, SubFolders) are pinned.
 type Account struct {
 	Name           string   `json:"name"`
 	Host           string   `json:"host"`
@@ -31,6 +31,7 @@ type Account struct {
 	Password       string   `json:"password"`
 	PassCmd        string   `json:"pass_cmd"`
 	TLS            string   `json:"tls"`
+	AuthMechs      []string `json:"auth_mechs"`
 	Patterns       []string `json:"patterns"`
 	ExcludeFolders []string `json:"exclude_folders"`
 	ExpungeLocal   bool     `json:"expunge_local"`
@@ -68,6 +69,10 @@ func hasControl(s string) bool {
 // reference (a password of "p$ssw0rd" becomes "p"); braces-only expansion
 // leaves a bare "$" untouched.
 var envRef = regexp.MustCompile(`\$\{(\w+)\}`)
+
+// saslMech matches one auth_mechs entry: a SASL mechanism name (PLAIN,
+// SCRAM-SHA-256, XOAUTH2 ...) or mbsync's "*" wildcard.
+var saslMech = regexp.MustCompile(`^(\*|[A-Za-z0-9_-]+)$`)
 
 func expandBracedEnv(s string) string {
 	return envRef.ReplaceAllStringFunc(s, func(m string) string {
@@ -145,6 +150,14 @@ func loadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("account %q: password is empty and no pass_cmd is set; is the referenced environment variable set?", a.Name)
 		case hasControl(a.PassCmd):
 			return nil, fmt.Errorf("account %q: pass_cmd must not contain control characters", a.Name)
+		}
+		// The names go on one AuthMechs line separated by spaces, so a
+		// space inside one would silently become two mechanisms, a quote
+		// would break the line, and mbsync reads a "#" as a comment.
+		for _, m := range a.AuthMechs {
+			if !saslMech.MatchString(m) {
+				return nil, fmt.Errorf("account %q: auth_mechs entry %q is not a SASL mechanism name such as PLAIN", a.Name, m)
+			}
 		}
 		switch a.TLS {
 		case "":
@@ -395,7 +408,7 @@ func main() {
 	// "serve" is the daemon. Anything else, including no argument, is stdio,
 	// so a bare "docker run -i image" speaks MCP on stdin, which is what
 	// every client and directory expects.
-	sock := filepath.Join(os.Getenv("INDEX"), "mcp.sock")
+	sock := socketPath
 	_, statErr := os.Stat(sock)
 	var err error
 	switch {
@@ -416,6 +429,14 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// socketPath is where the daemon listens for local sessions. It lives in the
+// container's own filesystem, never on a mounted volume: Docker Desktop's
+// file sharing refuses to bind a Unix socket on a host directory ("bind:
+// operation not supported"), and every docker exec session shares the
+// container's /tmp anyway. The path is fixed, not os.TempDir(): a daemon and
+// a client started with different TMPDIR values must still agree on it.
+const socketPath = "/tmp/your-mail-mcp.sock"
 
 func run(ctx context.Context, stdio bool) error {
 	// One cancellable context for the whole run, shared by every goroutine
@@ -508,7 +529,7 @@ func run(ctx context.Context, stdio bool) error {
 	m := mcp.NewServer(&mcp.Implementation{Name: "your-mail-mcp", Version: "0.4.0"}, nil)
 	srv.registerTools(m)
 
-	sock := filepath.Join(e.Index, "mcp.sock")
+	sock := socketPath
 	// serveSocket removes the socket when it returns, but that is a
 	// goroutine racing process exit; removing it here as well means a clean
 	// shutdown never leaves a file for the next start to dial into.

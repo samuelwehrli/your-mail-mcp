@@ -79,7 +79,8 @@ for the password:
 ```
 
 Optional per-account keys: `port`, `tls` (`imaps` default, `starttls`, `none`),
-`patterns` (mbsync folder patterns, default `*`), `exclude_folders`.
+`patterns` (mbsync folder patterns, default `*`), `exclude_folders`,
+`auth_mechs`.
 
 Deliberately **not** configurable, with the reasoning recorded so it is not
 reintroduced by habit:
@@ -91,9 +92,13 @@ reintroduced by habit:
 - **`SubFolders` is pinned to `Verbatim`.** It controls the *local* hierarchy
   layout, and mbsync discovers the server's delimiter itself. The setting only
   matters when another mail client reads the same maildir, and nothing does.
-- **`AuthMechs` is left unset**, so mbsync negotiates. The reference implementation
-  pinned `LOGIN` for iCloud without evidence it was required. If a real server
-  fails during testing, it comes back as a per-account key.
+- **`AuthMechs` is left unset by default**, so mbsync negotiates. The reference
+  implementation pinned `LOGIN` for iCloud without evidence it was required. If
+  a real server fails during testing, it comes back as a per-account key. Two
+  did: Gmail and iCloud both fail on macOS, where mbsync built against the
+  system libsasl2 picks a mechanism that cannot work with a password.
+  `auth_mechs` on the account writes the line for that account only; every
+  other account keeps negotiating.
 
 ## 1. Shape
 
@@ -486,8 +491,10 @@ sections 5 and "Invariants" is unchanged.
 
 The container is the whole system: sync, index and every client interface
 live in one process. `serve` is the daemon. It syncs on the ticker, listens
-on a Unix socket at `INDEX/mcp.sock` for local clients, and opens the HTTP
-listener only when `PUBLIC_URL` is set. Without `PUBLIC_URL` there is no
+on a Unix socket at `/tmp/your-mail-mcp.sock` for local clients, and opens the
+HTTP listener only when `PUBLIC_URL` is set. The socket stays off every mounted
+volume: Docker Desktop's file sharing cannot bind a Unix socket on a host
+directory, and `docker exec` sessions share the container's `/tmp`. Without `PUBLIC_URL` there is no
 listener and no OAuth; with it, `OAUTH_PASSPHRASE` is required as before.
 
 `stdio` is how a local client attaches. If the socket exists, it copies

@@ -112,7 +112,14 @@ func genMbsyncrc(cfg *Config, maildir string) string {
 		// distributions still carrying 1.4.x, and this is the one spelling
 		// that works on both.
 		b.WriteString("SSLType " + tls + "\n")
-		if a.TLS == "none" {
+		switch {
+		case len(a.AuthMechs) > 0:
+			// The operator has said which mechanisms to offer. The case
+			// that needs it is mbsync linked against macOS's system
+			// libsasl2: against Gmail and iCloud it picks a mechanism
+			// that cannot work with a password and never tries PLAIN.
+			b.WriteString("AuthMechs " + strings.Join(a.AuthMechs, " ") + "\n")
+		case a.TLS == "none":
 			// mbsync refuses to send LOGIN over an unencrypted connection
 			// unless told to, which leaves tls:none unable to authenticate at
 			// all. Someone who sets tls:none has already accepted that the
