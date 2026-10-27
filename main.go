@@ -22,13 +22,14 @@ import (
 
 // Account is one IMAP account to mirror. Everything except name, host, user
 // and password has a default; see the design spec for why the mbsync knobs
-// that used to live here (pipeline depth, SubFolders, AuthMechs) are pinned.
+// that used to live here (pipeline depth, SubFolders) are pinned.
 type Account struct {
 	Name           string   `json:"name"`
 	Host           string   `json:"host"`
 	Port           int      `json:"port"`
 	User           string   `json:"user"`
 	Password       string   `json:"password"`
+	PassCmd        string   `json:"pass_cmd"`
 	TLS            string   `json:"tls"`
 	AuthMechs      []string `json:"auth_mechs"`
 	Patterns       []string `json:"patterns"`
@@ -50,11 +51,28 @@ func hasWhitespaceOrControl(s string) bool {
 	return false
 }
 
+// hasControl returns true if s contains any control character. A command
+// line needs its spaces, so this is the narrower check pass_cmd gets: a
+// newline in it would end the generated mbsyncrc line early and turn the
+// rest into a directive of its own.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // envRef matches ${VAR} references only. os.ExpandEnv also expands a bare
 // $VAR, which mangles a literal "$" in a value that was never meant to be a
 // reference (a password of "p$ssw0rd" becomes "p"); braces-only expansion
 // leaves a bare "$" untouched.
 var envRef = regexp.MustCompile(`\$\{(\w+)\}`)
+
+// saslMech matches one auth_mechs entry: a SASL mechanism name (PLAIN,
+// SCRAM-SHA-256, XOAUTH2 ...) or mbsync's "*" wildcard.
+var saslMech = regexp.MustCompile(`^(\*|[A-Za-z0-9_-]+)$`)
 
 func expandBracedEnv(s string) string {
 	return envRef.ReplaceAllStringFunc(s, func(m string) string {
@@ -92,6 +110,7 @@ func loadConfig(path string) (*Config, error) {
 		a.Host = expandBracedEnv(a.Host)
 		a.User = expandBracedEnv(a.User)
 		a.Password = expandBracedEnv(a.Password)
+		a.PassCmd = expandBracedEnv(a.PassCmd)
 		a.TLS = expandBracedEnv(a.TLS)
 		for j, p := range a.Patterns {
 			a.Patterns[j] = expandBracedEnv(p)
@@ -124,16 +143,20 @@ func loadConfig(path string) (*Config, error) {
 		if hasWhitespaceOrControl(a.User) {
 			return nil, fmt.Errorf("account %q: user must not contain whitespace or control characters", a.Name)
 		}
-		if a.Password == "" {
-			return nil, fmt.Errorf("account %q: password is empty; is the referenced environment variable set?", a.Name)
+		switch {
+		case a.Password != "" && a.PassCmd != "":
+			return nil, fmt.Errorf("account %q: password and pass_cmd are both set; use one or the other", a.Name)
+		case a.Password == "" && a.PassCmd == "":
+			return nil, fmt.Errorf("account %q: password is empty and no pass_cmd is set; is the referenced environment variable set?", a.Name)
+		case hasControl(a.PassCmd):
+			return nil, fmt.Errorf("account %q: pass_cmd must not contain control characters", a.Name)
 		}
-		// A mechanism is one SASL token (PLAIN, LOGIN, XOAUTH2 ...) or "*".
 		// The names go on one AuthMechs line separated by spaces, so a
-		// space inside one would silently become two mechanisms, and a
-		// quote or backslash would break the generated line.
+		// space inside one would silently become two mechanisms, a quote
+		// would break the line, and mbsync reads a "#" as a comment.
 		for _, m := range a.AuthMechs {
-			if m == "" || hasWhitespaceOrControl(m) || strings.ContainsAny(m, `"\`) {
-				return nil, fmt.Errorf("account %q: auth_mechs entries must be single SASL mechanism names such as PLAIN", a.Name)
+			if !saslMech.MatchString(m) {
+				return nil, fmt.Errorf("account %q: auth_mechs entry %q is not a SASL mechanism name such as PLAIN", a.Name, m)
 			}
 		}
 		switch a.TLS {

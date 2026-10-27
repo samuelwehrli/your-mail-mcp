@@ -15,7 +15,9 @@ in the [README](../README.md).
 Mounted read-only at `/config/accounts.json` (see `compose.yaml`). JSON,
 parsed with `encoding/json`, expanded against the process environment before
 parsing so `${VAR}` in any string value is replaced with the environment
-variable of that name. This is how secrets stay out of the file:
+variable of that name. This is how secrets stay out of the file. An account
+can instead name a command with `pass_cmd`; then the secret stays out of the
+environment too:
 
 ```json
 {
@@ -38,7 +40,8 @@ Per-account keys:
 | `host` | — | Required. IMAP server hostname. |
 | `port` | `993` (`imaps`) or `143` (otherwise) | |
 | `user` | — | Required. See [Provider notes](#provider-notes): iCloud wants the short name, not the full email address. |
-| `password` | — | Required. `${VAR}` expands from the environment; a literal password also works but is not recommended. |
+| `password` | — | Required unless `pass_cmd` is set. `${VAR}` expands from the environment; a literal password also works but is not recommended. |
+| `pass_cmd` | — | A command that prints the password, run by mbsync through `/bin/sh -c` on every connection, with one trailing newline stripped. Written to the generated mbsyncrc as `PassCmd`, so neither the environment nor that file holds the secret. Exactly one of `password` and `pass_cmd` must be set. Examples: `cat /run/secrets/work_pass` with a Docker secret, `security find-generic-password -s your-mail -a work -w` on a macOS host. The command runs with the daemon's environment and `PATH`. |
 | `tls` | `imaps` | `imaps`, `starttls`, or `none`. |
 | `auth_mechs` | negotiated | SASL mechanisms mbsync may offer, as a list of names (`["PLAIN"]`), written as `AuthMechs`. Leave unset unless login fails: on macOS, Gmail and iCloud both need `["PLAIN"]`, see [Provider notes](#provider-notes). An explicit list also replaces the `LOGIN` that `tls: none` would otherwise force. |
 | `patterns` | `["*"]` | mbsync folder patterns — which folders to mirror. |
@@ -111,6 +114,16 @@ through this server yet.
   container image's Cyrus SASL does not show the problem. `openssl s_client
   -connect host:993` followed by `a CAPABILITY` shows what a server
   advertises.
+- **OAuth2-only providers**: some providers accept IMAP only with an
+  OAuth2 access token, which expires after about an hour, so a static
+  `password` cannot work. Give the account a `pass_cmd` that prints a fresh
+  token on every connection and set `"auth_mechs": ["XOAUTH2"]`. The image
+  carries the Cyrus SASL XOAUTH2 plugin and python3 for mutt's
+  `mutt_oauth2.py`, which refreshes the token and writes it back to disk;
+  `deploy/oauth2/` is a complete compose project for this. Set
+  `exclude_folders` explicitly: SPECIAL-USE discovery logs in with a plain
+  `LOGIN`, which such an account refuses, and a configured list skips the
+  discovery.
 - **Dovecot** servers (many self-hosted and smaller providers) commonly
   prefix folder names with `INBOX.` (e.g. `INBOX.Sent`). If `folders` shows
   folder names you didn't expect, this is usually why.

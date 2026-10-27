@@ -25,7 +25,9 @@ Out of scope for v1, listed so it does not creep in:
 
 - Sending mail. Composing drafts. Any write to any account.
 - Attachment export.
-- XOAUTH2 against Gmail or Microsoft as mail providers.
+- Obtaining OAuth2 tokens from a mail provider in this process. Since
+  `pass_cmd`, an external helper may supply an XOAUTH2 token to mbsync; the
+  server itself never speaks the provider's OAuth2.
 
 ## Host and provider agnosticism
 
@@ -68,7 +70,8 @@ Process-level settings are environment variables:
 
 Accounts live in a JSON file, parsed with `encoding/json` so no dependency is
 added. Secrets stay in the environment and are referenced by `${VAR}`, expanded at
-load:
+load, or stay out of the environment as well behind a `pass_cmd` that mbsync runs
+for the password:
 
 ```json
 { "accounts": [
@@ -78,7 +81,8 @@ load:
 ```
 
 Optional per-account keys: `port`, `tls` (`imaps` default, `starttls`, `none`),
-`patterns` (mbsync folder patterns, default `*`), `exclude_folders`.
+`patterns` (mbsync folder patterns, default `*`), `exclude_folders`,
+`auth_mechs`.
 
 Deliberately **not** configurable, with the reasoning recorded so it is not
 reintroduced by habit:
@@ -90,13 +94,13 @@ reintroduced by habit:
 - **`SubFolders` is pinned to `Verbatim`.** It controls the *local* hierarchy
   layout, and mbsync discovers the server's delimiter itself. The setting only
   matters when another mail client reads the same maildir, and nothing does.
-- **`AuthMechs` is left unset**, so mbsync negotiates. The reference implementation
-  pinned `LOGIN` for iCloud without evidence it was required. If a real server
-  fails during testing, it comes back as a per-account key — and they did:
-  Gmail and iCloud both fail on macOS, where mbsync built against the system
-  libsasl2 does not negotiate a password login against a server that also
-  advertises OAUTHBEARER. `auth_mechs` on the account writes the line for
-  that account only; every other account keeps negotiating.
+- **`AuthMechs` is left unset by default**, so mbsync negotiates. The reference
+  implementation pinned `LOGIN` for iCloud without evidence it was required. If
+  a real server fails during testing, it comes back as a per-account key. Two
+  did: Gmail and iCloud both fail on macOS, where mbsync built against the
+  system libsasl2 picks a mechanism that cannot work with a password.
+  `auth_mechs` on the account writes the line for that account only; every
+  other account keeps negotiating.
 
 ## 1. Shape
 
@@ -426,10 +430,12 @@ by a tunnel can additionally restrict ingress to Anthropic's published egress
 range, `160.79.104.0/21`.
 
 On credentials, account passwords are supplied in the process environment and
-referenced from the accounts file. The README states this plainly, along with the
-consequence: they are visible to anything that can read the container's
-environment, and protection at rest is the host's responsibility. No claim of
-encryption at rest is made.
+referenced from the accounts file, or obtained by a per-account `pass_cmd` that
+mbsync executes at connect time (`PassCmd`), which keeps them out of both the
+environment and the generated configuration. The README states this plainly,
+along with the consequence for the environment path: passwords there are visible
+to anything that can read the container's environment, and protection at rest is
+the host's responsibility. No claim of encryption at rest is made.
 
 ## 6. Repository, tests, build order
 

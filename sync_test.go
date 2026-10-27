@@ -103,6 +103,43 @@ func TestGenMbsyncrcEscapesPasswords(t *testing.T) {
 	}
 }
 
+func TestGenMbsyncrcWritesPassCmdInsteadOfPass(t *testing.T) {
+	cfg := &Config{Accounts: []Account{
+		{Name: "work", Host: "h", Port: 993, User: "u", PassCmd: `security find-generic-password -s "your-mail" -a work -w`, TLS: "imaps", Patterns: []string{"*"}},
+	}}
+	out := genMbsyncrc(cfg, "/mail")
+	if !strings.Contains(out, "\nPassCmd \"security find-generic-password -s \\\"your-mail\\\" -a work -w\"\n") {
+		t.Errorf("PassCmd line missing or misquoted in:\n%s", out)
+	}
+	if strings.Contains(out, "\nPass ") {
+		t.Error("a pass_cmd account must not also get a Pass line; mbsync would send the empty one")
+	}
+}
+
+// discoverSpecialUse is the one place this process needs the password itself.
+// With pass_cmd it must obtain it exactly as mbsync will: run the command
+// through the shell, take stdout, drop one trailing newline, ignore stderr.
+func TestAccountPasswordRunsPassCmdLikeMbsync(t *testing.T) {
+	ctx := context.Background()
+	if pw, err := (Account{Name: "a", Password: "p"}).password(ctx); err != nil || pw != "p" {
+		t.Fatalf("literal password = %q, %v; want it returned untouched", pw, err)
+	}
+	pw, err := (Account{Name: "a", PassCmd: `echo warning >&2; printf 's3cret\n'`}).password(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pw != "s3cret" {
+		t.Errorf("password = %q, want %q: one trailing newline stripped, stderr kept out", pw, "s3cret")
+	}
+	_, err = (Account{Name: "a", PassCmd: `echo no such item >&2; exit 44`}).password(ctx)
+	if err == nil || !strings.Contains(err.Error(), "no such item") {
+		t.Errorf("err = %v, want the command's stderr in the error", err)
+	}
+	if _, err := (Account{Name: "a", PassCmd: "true"}).password(ctx); err == nil {
+		t.Error("a command that prints nothing must be an error, not an empty password")
+	}
+}
+
 func TestGenMbsyncrcQuotesPatterns(t *testing.T) {
 	cfg := &Config{Accounts: []Account{
 		{Name: "work", Host: "h", Port: 993, User: "u", Password: "p", TLS: "imaps", Patterns: []string{"Sent Items", "INBOX"}},
@@ -984,9 +1021,9 @@ func TestGenMbsyncrcForcesLoginOnlyWhenUnencrypted(t *testing.T) {
 }
 
 // auth_mechs is the per-account key the spec reserved for a real server that
-// fails negotiation: one advertising OAUTHBEARER and XOAUTH2 beside PLAIN,
-// where macOS's system libsasl2 picks OAUTHBEARER and fails for want of a
-// token callback; pinning PLAIN logs in.
+// fails negotiation: Gmail and iCloud, where mbsync linked against macOS's
+// system libsasl2 picks a mechanism that cannot work with a password;
+// pinning PLAIN logs in.
 func TestGenMbsyncrcWritesConfiguredAuthMechs(t *testing.T) {
 	out := genMbsyncrc(&Config{Accounts: []Account{
 		{Name: "a", Host: "h", Port: 993, User: "u", Password: "p", TLS: "imaps", Patterns: []string{"*"}, AuthMechs: []string{"PLAIN", "LOGIN"}},

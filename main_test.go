@@ -93,6 +93,44 @@ func TestLoadConfigExpandsSpecialCharactersSafely(t *testing.T) {
 	}
 }
 
+// pass_cmd is the alternative to a password in the environment: mbsync runs
+// the command for the secret, so neither the accounts file, the environment
+// nor the generated mbsyncrc holds it. It expands ${VAR} like every other
+// field and leaves Password empty.
+func TestLoadConfigAcceptsPassCmd(t *testing.T) {
+	t.Setenv("PASS_ITEM", "work")
+	path := writeConfig(t, `{"accounts":[
+		{"name":"work","host":"imap.gmail.com","user":"me@example.com","pass_cmd":"security find-generic-password -s your-mail -a ${PASS_ITEM} -w"}
+	]}`)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	a := cfg.Accounts[0]
+	if a.PassCmd != "security find-generic-password -s your-mail -a work -w" {
+		t.Errorf("pass_cmd = %q, want ${VAR} expanded", a.PassCmd)
+	}
+	if a.Password != "" {
+		t.Errorf("password = %q, want empty when pass_cmd is set", a.Password)
+	}
+}
+
+// The key has to survive the trip from JSON: unknown fields are not rejected,
+// so a wrong struct tag would drop it silently and the login failure it
+// exists for would come back.
+func TestLoadConfigAcceptsAuthMechs(t *testing.T) {
+	path := writeConfig(t, `{"accounts":[
+		{"name":"work","host":"imap.gmail.com","user":"me@example.com","password":"p","auth_mechs":["PLAIN","SCRAM-SHA-256","*"]}
+	]}`)
+	cfg, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got := strings.Join(cfg.Accounts[0].AuthMechs, " "); got != "PLAIN SCRAM-SHA-256 *" {
+		t.Errorf("auth_mechs = %q, want the three entries as written", got)
+	}
+}
+
 func TestLoadConfigAllowsMissingFileAndNoAccounts(t *testing.T) {
 	cfg, err := loadConfig(filepath.Join(t.TempDir(), "absent.json"))
 	if err != nil || len(cfg.Accounts) != 0 {
@@ -127,6 +165,18 @@ func TestLoadConfigRejectsBadInput(t *testing.T) {
 			`{"accounts":[{"name":"a","host":"h","user":"u","password":"${NOT_SET_ANYWHERE}"}]}`,
 			"password",
 		},
+		"no secret at all": {
+			`{"accounts":[{"name":"a","host":"h","user":"u"}]}`,
+			"password",
+		},
+		"password and pass_cmd together": {
+			`{"accounts":[{"name":"a","host":"h","user":"u","password":"p","pass_cmd":"cat /run/secrets/a"}]}`,
+			"pass_cmd",
+		},
+		"newline in pass_cmd": {
+			`{"accounts":[{"name":"a","host":"h","user":"u","pass_cmd":"cat /run/secrets/a\nPass x"}]}`,
+			"pass_cmd",
+		},
 		"unknown tls": {
 			`{"accounts":[{"name":"a","host":"h","user":"u","password":"p","tls":"wat"}]}`,
 			"tls",
@@ -149,6 +199,10 @@ func TestLoadConfigRejectsBadInput(t *testing.T) {
 		},
 		"space inside an auth mechanism": {
 			`{"accounts":[{"name":"a","host":"h","user":"u","password":"p","auth_mechs":["PLAIN LOGIN"]}]}`,
+			"auth_mechs",
+		},
+		"comment character in an auth mechanism": {
+			`{"accounts":[{"name":"a","host":"h","user":"u","password":"p","auth_mechs":["#PLAIN"]}]}`,
 			"auth_mechs",
 		},
 		"quote inside an auth mechanism": {

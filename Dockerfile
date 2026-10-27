@@ -8,14 +8,17 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/your-mail-mcp .
 
 FROM debian:trixie-slim
 LABEL io.modelcontextprotocol.server.name="io.github.wildsurfer/your-mail-mcp"
+# libsasl2-modules-kdexoauth2 gives Cyrus SASL the XOAUTH2 mechanism for
+# OAuth2-only accounts; python3 runs the token helper a pass_cmd points at.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends isync notmuch w3m ca-certificates \
+ && apt-get install -y --no-install-recommends \
+    isync notmuch w3m ca-certificates libsasl2-modules-kdexoauth2 python3 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/your-mail-mcp /usr/local/bin/your-mail-mcp
 ENV MAILDIR=/mail INDEX=/index CONFIG=/config/accounts.json LISTEN_ADDR=:8080
 # Volumes are created root-owned on first mount; pre-create and chown so the
 # non-root user below can actually write into them.
-RUN mkdir -p /mail /index && chown 1000:1000 /mail /index
+RUN mkdir -p /mail /index /oauth && chown 1000:1000 /mail /index /oauth
 VOLUME ["/mail", "/index"]
 EXPOSE 8080
 USER 1000:1000
