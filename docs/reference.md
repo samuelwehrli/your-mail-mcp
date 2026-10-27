@@ -114,6 +114,16 @@ through this server yet.
   container image's Cyrus SASL does not show the problem. `openssl s_client
   -connect host:993` followed by `a CAPABILITY` shows what a server
   advertises.
+- **OAuth2-only providers**: some providers accept IMAP only with an
+  OAuth2 access token, which expires after about an hour, so a static
+  `password` cannot work. Give the account a `pass_cmd` that prints a fresh
+  token on every connection and set `"auth_mechs": ["XOAUTH2"]`. The image
+  carries the Cyrus SASL XOAUTH2 plugin and python3 for mutt's
+  `mutt_oauth2.py`, which refreshes the token and writes it back to disk;
+  `deploy/oauth2/` is a complete compose project for this. Set
+  `exclude_folders` explicitly: SPECIAL-USE discovery logs in with a plain
+  `LOGIN`, which such an account refuses, and a configured list skips the
+  discovery.
 - **Dovecot** servers (many self-hosted and smaller providers) commonly
   prefix folder names with `INBOX.` (e.g. `INBOX.Sent`). If `folders` shows
   folder names you didn't expect, this is usually why.

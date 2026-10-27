@@ -89,8 +89,9 @@ account with another variable name needs that name added under
 Two provider details cost people the most time. Gmail accepts only an app
 password over IMAP, and app passwords need 2-step verification turned on
 first. iCloud wants the short name before `@icloud.com` as `user`; the full
-address fails to log in. Every key of the file is in
-[the reference](docs/reference.md#the-accounts-file).
+address fails to log in. A provider that accepts only OAuth2 over IMAP
+takes a token through `pass_cmd`; see `deploy/oauth2/`. Every key of
+the file is in [the reference](docs/reference.md#the-accounts-file).
 
 These two files hold your mail passwords. Keep the directory out of version
 control and out of backups that leave the machine. If you would rather they
