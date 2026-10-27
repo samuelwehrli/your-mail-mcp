@@ -29,6 +29,11 @@ if [ ! -f oauth/token.txt ]; then
 	exit 1
 fi
 
+# The helper stores the expiry as a naive local time, and the container runs
+# in UTC. Writing it in UTC here keeps the container from trusting an expired
+# token for as long as this machine's UTC offset.
+export TZ=UTC
+
 # -u: the device-code message must appear before the script starts polling.
 # The last line it prints is the access token itself; drop it.
 python3 -u oauth/mutt_oauth2.py oauth/token.txt --authorize --authflow devicecode |

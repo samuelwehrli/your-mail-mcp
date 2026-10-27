@@ -38,8 +38,12 @@ to `oauth/` and change two things:
 Create the token once, on a machine with a browser:
 
 ```sh
-python3 oauth/mutt_oauth2.py oauth/token.txt --authorize --authflow devicecode
+TZ=UTC python3 oauth/mutt_oauth2.py oauth/token.txt --authorize --authflow devicecode
 ```
+
+`TZ=UTC` matters: the helper stores the token's expiry as a naive local time,
+and the container runs in UTC. Written on a machine an hour ahead of UTC, the
+container would keep using an expired token for that hour.
 
 Answer the registration name, `devicecode` and your address; then open the
 URL it prints and enter the code. Afterwards every call without
