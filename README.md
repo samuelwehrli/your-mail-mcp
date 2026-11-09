@@ -433,3 +433,5 @@ order of how much each buys you.
 - [Upgrading from 0.3.x](docs/upgrading.md).
 - [Design spec](docs/specs/2026-08-19-your-mail-mcp-design.md) and
   [the survey of email MCP servers](docs/research/email-mcp-landscape.md).
+
+
